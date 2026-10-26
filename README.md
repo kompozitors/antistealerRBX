@@ -1,31 +1,26 @@
-# 🛡️ MM2 Security Shield (Kernel-Level Anti-Stealer)
+# 🛡️ AntiStealer — MM2 Security Script
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Environment: Luau](https://img.shields.io/badge/Language-Luau-00A2FF.svg)]()
 [![Platform: PC & Mobile](https://img.shields.io/badge/Platform-Potassium%20%7C%20Delta%20%7C%20Arceus-brightgreen.svg)]()
 
-**MM2 Shield** — высокопроизводительное ядро безопасности для Murder Mystery 2, разработанное для защиты инвентарей игроков от автоматических стилеров оружия, скрытых C2-панелей (Project Reverse) и Discord-логгеров.
+**AntiStealer** — открытый защитный скрипт для **Murder Mystery 2 (Roblox)**, разработанный для нейтрализации скрытых стилеров инвентаря, C2-панелей скамеров (Project Reverse) и Discord-логгеров.
 
 ---
 
-## ⚡ Ключевые возможности
+## ⚡ Функционал скрипта
 
-* **Input-Aware Verification (Zero-Click Defense):**  
-  Блокирует любые скрытые вызовы `OfferItem`, `AcceptTrade`, `ConfirmTrade`, запущенные без реального физического клика мыши/тапа экрана. Легитимные трейды работают без задержек.
-* **Dual-Layer C-Hook Protection:**  
-  Перехватывает `__namecall` и прямой C-уровень вызовов `RemoteEvent.FireServer`. Обфускаторы (Luraph) не способны обойти защиту.
-* **DPI Network Filter (C2 Exfiltration Blocker):**  
-  Анализирует исходящий трафик `request`, глушит панели управления скамеров (`api.project-reverse.org`), попытки слива `game.JobId` и Base64-зашифрованные пакеты инвентаря.
-* **Auto-Nuke Webhook Engine:**  
-  При обнаружении Discord-вебхука скамера автоматически отправляет запрос `DELETE` и уничтожает канал приёма логов из Discord.
-* **Нулевое влияние на FPS:**  
-  Средняя задержка перехвата составляет всего **0.28 µs**, утечка памяти — **0 KB**.
+* **Фильтр физического клика (Anti-ZeroClick):** Блокирует любые тайные попытки передать оружие через `OfferItem`, `AcceptTrade`, `ConfirmTrade`, запущенные вредоносными скриптами без реального клика мышью или тапа игрока. Обычные трейды работают без задержек.
+* **C-Level Hook:** Перехватывает как метаметод `__namecall`, так и прямые вызовы `RemoteEvent.FireServer`, не давая шанса обфусцированным скриптам (Luraph VM).
+* **Глушилка C2-панелей (DPI Filter):** Блокирует исходящие запросы в панели скамеров (`api.project-reverse.org`), пресекая утечки `game.JobId` и Base64-дампов инвентаря.
+* **Авто-удаление вебхуков скамеров:** При перехвате вредоносного Discord-вебхука отправляет фоновый запрос `DELETE` на серверы Discord, навсегда уничтожая канал сбора логов скамера.
+* **Zero-Lag оптимизация:** Дополнительная задержка вызовов составляет всего **0.28 мкс**, утечка памяти — **0 KB**.
 
 ---
 
-## 🚀 Быстрый запуск
+## 🚀 Запуск скрипта
 
-Добавьте скрипт в автозагрузку (Auto-Execute) вашего экзекутора:
+Вставьте в ваш экзекутор или добавьте в папку автозагрузки (**Auto-Execute**):
 
 ```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/kompozitors/antistealerRBX/AntiStealer.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/kompozitors/antistealerRBX/main/AntiStealer.lua"))()
