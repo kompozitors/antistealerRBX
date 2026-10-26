@@ -28,4 +28,4 @@
 Добавьте скрипт в автозагрузку (Auto-Execute) вашего экзекутора:
 
 ```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/ВАШ_НИК/mm2-shield/main/mm2_shield.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/kompozitors/antistealerRBX/AntiStealer.lua"))()
