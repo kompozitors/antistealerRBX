@@ -543,11 +543,17 @@ do
 
     if type(syn) == "table" and type(syn.request) == "function" then
         pcall(function() hookfunction(syn.request, wrappedClosure) end)
-        syn.request = wrappedClosure
+        pcall(function()
+            if setreadonly then setreadonly(syn, false) end
+            syn.request = wrappedClosure
+        end)
     end
     if type(http) == "table" and type(http.request) == "function" then
         pcall(function() hookfunction(http.request, wrappedClosure) end)
-        http.request = wrappedClosure
+        pcall(function()
+            if setreadonly then setreadonly(http, false) end
+            http.request = wrappedClosure
+        end)
     end
 
     getgenv().ShieldStats = function()
