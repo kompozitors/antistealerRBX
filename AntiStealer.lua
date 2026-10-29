@@ -242,6 +242,8 @@ do
 
     local lastOfferTime = 0
     local offerCountInWindow = 0
+    local lastAcceptTradeTime = 0
+
     local function isAutomatedBurst(remoteInstance)
         local n = string.lower(remoteInstance.Name)
         if n == "offeritem" or n == "additem" then
@@ -266,6 +268,23 @@ do
 
     local function handleTradeInterception(remoteInstance, method)
         local isHuman = isRecentPhysicalInput()
+        local remoteNameLower = string.lower(remoteInstance.Name)
+        local now = os.clock()
+
+        -- Защита от Confirm-ботов: в MM2 между Accept и Confirm обязательный 3-секундный кулдаун.
+        -- Человек физически не может нажать Confirm раньше чем через 2.5с. Любая попытка мгновенного Confirm — стиллер-бот.
+        if string.find(remoteNameLower, "confirmtrade", 1, true) then
+            if (now - lastAcceptTradeTime) < 2.5 then
+                Stats.BlockedTrades = Stats.BlockedTrades + 1
+                warn(string.format("[Щит @lattescripts]: Заблокирован мгновенный ConfirmTrade (%.2fс после Accept)! Авто-трейд бот остановлен.", now - lastAcceptTradeTime))
+                showInGameAlert("⚠️ ОБНАРУЖЕН ТРЕЙД-БОТ!", "Скрипт пытался мгновенно подтвердить трейд в обход таймера MM2! Атака отражена (@lattescripts).", true)
+                return true
+            end
+        end
+
+        if string.find(remoteNameLower, "accepttrade", 1, true) then
+            lastAcceptTradeTime = now
+        end
 
         if isHuman then
             if isAutomatedBurst(remoteInstance) then
@@ -284,21 +303,27 @@ do
         return true
     end
 
+    local isNamecallHooked = false
+    local isFireServerHooked = false
+
     if hookmetamethod then
-        oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-            local method = getnamecallmethod()
-            if (method == "FireServer" or method == "InvokeServer" or method == "fireServer" or method == "invokeServer") then
-                if isCriticalTradeRemote(self) then
-                    local shouldBlock = handleTradeInterception(self, method)
-                    if shouldBlock then return nil end
+        local success = pcall(function()
+            oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+                local method = getnamecallmethod()
+                if (method == "FireServer" or method == "InvokeServer" or method == "fireServer" or method == "invokeServer") then
+                    if isCriticalTradeRemote(self) then
+                        local shouldBlock = handleTradeInterception(self, method)
+                        if shouldBlock then return nil end
+                    end
                 end
-            end
-            return oldNamecall(self, ...)
-        end))
+                return oldNamecall(self, ...)
+            end))
+        end)
+        isNamecallHooked = success and (oldNamecall ~= nil)
     end
 
     if hookfunction then
-        pcall(function()
+        local success = pcall(function()
             local dummyEvent = Instance.new("RemoteEvent")
             local origFireServer = dummyEvent.FireServer
             hookfunction(origFireServer, newcclosure(function(self, ...)
@@ -310,6 +335,31 @@ do
             end))
             dummyEvent:Destroy()
         end)
+        isFireServerHooked = success
+    end
+
+    local SAFE_DOMAINS = {
+        "roblox.com",
+        "roproxy.com",
+        "rbxcdn.com",
+        "github.com",
+        "githubusercontent.com",
+        "pastebin.com",
+        "gitlab.com"
+    }
+
+    local function isSafeDomain(url)
+        if type(url) ~= "string" then return false end
+        local host = string.match(string.lower(url), "^%a+://([^/]+)") or string.match(string.lower(url), "^([^/]+)")
+        if not host then return false end
+        host = string.match(host, "^([^:]+)") or host
+        for i = 1, #SAFE_DOMAINS do
+            local safeDom = SAFE_DOMAINS[i]
+            if host == safeDom or string.sub(host, -#safeDom - 1) == "." .. safeDom then
+                return true
+            end
+        end
+        return false
     end
 
     local MALICIOUS_TARGETS = {
@@ -329,50 +379,93 @@ do
         "pipedream.net"
     }
 
+    local function safeUrlDecode(str)
+        if type(str) ~= "string" or not string.find(str, "%", 1, true) then return str end
+        local ok, res = pcall(function()
+            return string.gsub(str, "%%(%x%x)", function(hex)
+                return string.char(tonumber(hex, 16))
+            end)
+        end)
+        return (ok and res) or str
+    end
+
+    local INVENTORY_KEYWORDS = {
+        "inventory",
+        "godly",
+        "ancient",
+        "chroma",
+        "vintage",
+        "harvester",
+        "corrupt",
+        "candleflame",
+        "swirly",
+        "bat",
+        "knife",
+        "gun",
+        "weapons",
+        "iceflake",
+        "trade",
+        "potassium",
+        "stealer"
+    }
+
     local function isMaliciousExfiltration(url, rawBody)
         local lowerUrl = type(url) == "string" and string.lower(url) or ""
         local lowerBody = type(rawBody) == "string" and string.lower(rawBody) or ""
+        local decodedBody = safeUrlDecode(lowerBody)
+        local fullPayload = lowerUrl .. " " .. decodedBody
 
+        -- 1. Детект известных C2/вебхук адресов
         for i = 1, #MALICIOUS_TARGETS do
             if string.find(lowerUrl, MALICIOUS_TARGETS[i], 1, true) then
                 return true, "Discord / C2 Вебхук"
             end
         end
 
-        if #lowerBody > 0 then
-            if #currentJobId > 5 then
-                local lowerJobId = string.lower(currentJobId)
-                if string.find(lowerBody, lowerJobId, 1, true) then
-                    if string.find(lowerBody, "trade", 1, true) or string.find(lowerBody, "inventory", 1, true)
-                    or string.find(lowerBody, "godly", 1, true) then
-                        return true, "Слив JobID сервера"
-                    end
-                end
-            end
+        -- 2. Если домен доверенный (Roblox API, RoProxy, GitHub, CDN) — не блокируем
+        if isSafeDomain(lowerUrl) then
+            return false, nil
+        end
 
+        -- 3. Детект утечки JobID (с дефисами и без дефисов) в URL или Body на сторонние хосты
+        if #currentJobId > 5 then
+            local lowerJobId = string.lower(currentJobId)
+            local lowerJobIdNoHyphens = string.gsub(lowerJobId, "%-", "")
+            if string.find(fullPayload, lowerJobId, 1, true) or (#lowerJobIdNoHyphens >= 30 and string.find(fullPayload, lowerJobIdNoHyphens, 1, true)) then
+                return true, "Утечка JobID сервера (C2-слежение)"
+            end
+        end
+
+        -- 4. Детект инвентаря вместе с ником или UserId
+        if #decodedBody > 0 then
             local lowerName = string.lower(playerName)
-            local hasIdentity = string.find(lowerBody, lowerName, 1, true) or string.find(lowerBody, userId, 1, true)
-            local keywords = {"inventory", "godly", "ancient", "trade", "potassium", "stealer", "corrupt"}
+            local hasIdentity = string.find(fullPayload, lowerName, 1, true) or string.find(fullPayload, userId, 1, true)
 
             if hasIdentity then
-                for _, kw in ipairs(keywords) do
-                    if string.find(lowerBody, kw, 1, true) then
+                for _, kw in ipairs(INVENTORY_KEYWORDS) do
+                    if string.find(fullPayload, kw, 1, true) then
                         return true, "Сигнатура слива инвентаря"
                     end
                 end
             end
+        end
 
-            for token in string.gmatch(rawBody, "([A-Za-z0-9+/=]+)") do
-                if #token >= 12 then
-                    local decoded = safeBase64Decode(token):lower()
-                    if #decoded > 3 then
-                        if #currentJobId > 5 and string.find(decoded, string.lower(currentJobId), 1, true) then
+        -- 5. Поиск скрытых Base64 полезных нагрузок (в URL и теле)
+        local rawCombined = (type(rawBody) == "string" and rawBody or "") .. " " .. lowerUrl
+        for token in string.gmatch(rawCombined, "([A-Za-z0-9+/=]+)") do
+            if #token >= 16 then
+                local decoded = safeBase64Decode(token):lower()
+                if #decoded > 5 then
+                    if #currentJobId > 5 then
+                        local lowerJobId = string.lower(currentJobId)
+                        local lowerJobIdNoHyphens = string.gsub(lowerJobId, "%-", "")
+                        if string.find(decoded, lowerJobId, 1, true) or (#lowerJobIdNoHyphens >= 30 and string.find(decoded, lowerJobIdNoHyphens, 1, true)) then
                             return true, "Base64-утечка JobID"
                         end
-                        for _, kw in ipairs(keywords) do
-                            if string.find(decoded, kw, 1, true) then
-                                return true, "Base64-утечка инвентаря"
-                            end
+                    end
+                    for _, kw in ipairs(INVENTORY_KEYWORDS) do
+                        if string.find(decoded, kw, 1, true) then
+                            return true, "Base64-утечка инвентаря"
                         end
                     end
                 end
@@ -522,6 +615,7 @@ do
         end
     end
 
+    local isRequestHooked = false
     local rawReq = request or http_request
 
     if rawReq and hookfunction then
@@ -530,6 +624,7 @@ do
         end)
         if success and hookedOrig then
             origRequest = hookedOrig
+            isRequestHooked = true
         else
             origRequest = rawReq
         end
@@ -548,15 +643,42 @@ do
         pcall(function() hookfunction(http.request, wrappedClosure) end)
     end
 
+    local rawWsConnect = (WebSocket and WebSocket.connect) or (syn and type(syn) == "table" and type(syn.websocket) == "table" and syn.websocket.connect)
+    if rawWsConnect and hookfunction then
+        pcall(function()
+            hookfunction(rawWsConnect, newcclosure(function(url, ...)
+                local lowerUrl = type(url) == "string" and string.lower(url) or ""
+                for i = 1, #MALICIOUS_TARGETS do
+                    if string.find(lowerUrl, MALICIOUS_TARGETS[i], 1, true) then
+                        Stats.BlockedWebhooks = Stats.BlockedWebhooks + 1
+                        warn("[Щит @lattescripts]: Заблокировано опасное WebSocket-соединение: " .. tostring(url))
+                        showInGameAlert("⚠️ ВНИМАНИЕ: СТИЛЛЕР ОБНАРУЖЕН!", "Скрипт пытался открыть WebSocket-канал на сервер скамера! Соединение заблокировано.", true)
+                        return nil
+                    end
+                end
+                return rawWsConnect(url, ...)
+            end))
+        end)
+    end
+
     getgenv().ShieldStats = function()
         print(string.format("[Щит @lattescripts]: Заблокировано трейдов: %d | Заблокировано вебхуков: %d", Stats.BlockedTrades, Stats.BlockedWebhooks))
     end
 
-    showInGameAlert(
-        "Анти-Стиллер by @lattescripts",
-        "Защита инвентаря активна! Трейды работают штатно.",
-        false
-    )
-
-    print("[Щит @lattescripts]: Успешно загружен. Защита инвентаря активна!")
+    local fullyProtected = (isNamecallHooked or isFireServerHooked) and (isRequestHooked or rawReq ~= nil)
+    if fullyProtected then
+        showInGameAlert(
+            "Анти-Стиллер by @lattescripts",
+            "Защита инвентаря активна! Трейды работают штатно.",
+            false
+        )
+        print("[Щит @lattescripts]: Успешно загружен. Все уровни защиты активны!")
+    else
+        warn("[Щит @lattescripts]: Предупреждение: некоторые C-хуки не поддерживаются вашим экзекутором! Защита может работать ограниченно.")
+        showInGameAlert(
+            "Анти-Стиллер by @lattescripts",
+            "Внимание: экзекутор частично ограничил C-хуки!",
+            true
+        )
+    end
 end
